@@ -6,11 +6,12 @@ from docx import Document  # For DOCX files
 import pandas as pd  # For Excel files
 import io
 from pptx import Presentation  # For PPTX files
+import ffmpeg
+import os
+import whisper
+import tempfile
 
-
-# Function to extract text from PowerPoint files
 def extract_text_from_pptx(file):
-    # Read the file and extract text from PowerPoint presentation
     byte_data = file.read()
     prs = Presentation(io.BytesIO(byte_data))
     text = ""
@@ -21,24 +22,16 @@ def extract_text_from_pptx(file):
     return text
 
 def extract_text_from_pdf(uploaded_file):
-    # Read the uploaded file content as bytes
     byte_data = uploaded_file.read()
-
-    # Use io.BytesIO to convert byte_data to a file-like object
     with io.BytesIO(byte_data) as byte_file:
-        doc = fitz.open(stream=byte_file, filetype="pdf")  # Open using the byte stream
-
+        doc = fitz.open(stream=byte_file, filetype="pdf")
         text = ""
-        # Iterate over each page in the PDF and extract text
         for page_num in range(doc.page_count):
             page = doc.load_page(page_num)
             text += page.get_text()
-
     return text
 
-# Function to extract text from Word document
 def extract_text_from_word(file):
-    # Read the file and extract text from Word
     byte_data = file.read()
     doc = Document(io.BytesIO(byte_data))
     text = ""
@@ -46,15 +39,21 @@ def extract_text_from_word(file):
         text += para.text + "\n"
     return text
 
-# Function to extract text from Excel document
 def extract_text_from_excel(file):
-    # Read the file and convert it to a DataFrame
     byte_data = file.read()
     df = pd.read_excel(io.BytesIO(byte_data))
-    text = df.to_string()  # You can format the output as needed
+    text = df.to_string()
     return text
 
-# Generic function to extract text based on file type
+def extract_audio_from_mp4(video_path, output_audio_path):
+    ffmpeg.input(video_path).output(output_audio_path).run(overwrite_output=True)
+    os.remove(video_path)
+
+def transcribe_audio(audio_path):
+    model = whisper.load_model("base")
+    result = model.transcribe(audio_path)
+    return result['text']
+
 def extract_text_from_file(file):
     if file.type == "application/pdf":
         return extract_text_from_pdf(file)
@@ -62,23 +61,30 @@ def extract_text_from_file(file):
         return extract_text_from_word(file)
     elif file.type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
         return extract_text_from_excel(file)
-    elif file.type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":  # pptx type
+    elif file.type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
         return extract_text_from_pptx(file)
+    elif file.type == "video/mp4":
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_video:
+            tmp_video.write(file.read())
+            tmp_video_path = tmp_video.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio:
+            temp_audio_path = temp_audio.name
+
+        extract_audio_from_mp4(tmp_video_path, temp_audio_path)
+        return transcribe_audio(temp_audio_path)
     else:
         return "Unsupported file type"
 
-
-# Définir le modèle
 model = "llama3.1:8b-instruct-q4_K_M"
 
 system_prompt = '''
 You are an expert in Battery Management Systems (BMS), specializing in making complex information easy to understand. 
 When provided with a question and relevant context about Battery Management Systems, your task is to deliver a clear, concise, and comprehensive response based on the given information.
 Your objective is to ensure the user fully understands the key points and concepts related to BMS.
-always answer in the language of the question provided, not the language of the context!
+Always answer in the language of the question provided, not the language of the context!
 '''
 
-# Fonction pour appeler le modèle Llama3 via Ollama
 def talk_to_llama3(actual_prompt, temp):
     print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
     print(actual_prompt)
@@ -86,35 +92,41 @@ def talk_to_llama3(actual_prompt, temp):
     
     response = ollama.chat(
         model=model, 
-        messages=[
-            { 'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': actual_prompt},
-        ]
+        messages=[{'role': 'system', 'content': system_prompt},
+                  {'role': 'user', 'content': actual_prompt}]
     )
-
     return response['message']['content']
 
-# Fonction pour retirer les doublons
+def query_rag(prompt):
+    url = f'http://localhost:8000/chat?question={prompt}'
+    response = requests.get(url)
+    data = response.json()
+    return data.get('reply', "❌ Erreur lors de la récupération de la réponse.")
+
+def query_rag_with_context(prompt, context):
+    final_prompt = f"""Context: {context}
+
+Question: {prompt}
+"""
+    return talk_to_llama3(final_prompt, temp=0.7)
+
 def remove_duplicates(l):
     l_without_duplicates = []
-    unseen = set()  # Pour optimiser la recherche des doublons
+    unseen = set()
     for element in l:
         if element[0] not in unseen:
             l_without_duplicates.append(element)
             unseen.add(element[0])
     return l_without_duplicates
 
-# Fonction de recherche similaire dans la base de données
 def get_similiar(queries, db, n=4):
     results = []
     for query in queries:
         result = db.max_marginal_relevance_search(query, k=n)
         results.extend(result)
-
-    results = [(doc.page_content, 1) for doc in results]  # Formatage des résultats
+    results = [(doc.page_content, 1) for doc in results]
     return results
 
-# Fonction de reformulation des questions
 def reformulate(question, REFORMULATION_TEMP):
     questions = [question]
     for i in range(1):
@@ -127,5 +139,4 @@ def reformulate(question, REFORMULATION_TEMP):
         reformulation:
         """
         questions.append(talk_to_llama3(q, REFORMULATION_TEMP))
-        
     return questions
