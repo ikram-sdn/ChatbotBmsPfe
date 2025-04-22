@@ -10,6 +10,12 @@ import ffmpeg
 import os
 import whisper
 import tempfile
+import json
+import bcrypt
+
+
+USERS_FILE = "users.json"
+
 
 def extract_text_from_pptx(file):
     byte_data = file.read()
@@ -78,12 +84,20 @@ def extract_text_from_file(file):
 
 model = "llama3.1:8b-instruct-q4_K_M"
 
-system_prompt = '''
+system_prompt =  """
 You are an expert in Battery Management Systems (BMS), specializing in making complex information easy to understand. 
-When provided with a question and relevant context about Battery Management Systems, your task is to deliver a clear, concise, and comprehensive response based on the given information.
-Your objective is to ensure the user fully understands the key points and concepts related to BMS.
+When provided with a question and relevant context about Battery Management Systems, your task is to deliver a clear, concise, and accurate response strictly based on the provided context.
+Your objective is to ensure the user fully understands the key points and concepts related to BMS, without introducing any additional information that is not contained in the context.
 Always answer in the language of the question provided, not the language of the context!
-'''
+
+answer the following question based on the facts present in the context provided:
+
+Context: ```{context}```
+
+question: ```{question}```
+
+Provide your answer **directly** based on the facts in the context, without any interpretation or creative generation. If the context does not contain relevant information, explicitly state that you cannot answer the question.
+"""
 
 def talk_to_llama3(actual_prompt, temp):
     print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
@@ -102,12 +116,13 @@ def query_rag(prompt):
     response = requests.get(url)
     data = response.json()
     return data.get('reply', "❌ Erreur lors de la récupération de la réponse.")
-
+"""
+"""
 def query_rag_with_context(prompt, context):
     final_prompt = f"""Context: {context}
 
-Question: {prompt}
-"""
+Question: {prompt}"""
+
     return talk_to_llama3(final_prompt, temp=0.7)
 
 def remove_duplicates(l):
@@ -119,7 +134,7 @@ def remove_duplicates(l):
             unseen.add(element[0])
     return l_without_duplicates
 
-def get_similiar(queries, db, n=4):
+def get_similiar(queries, db, n=5):
     results = []
     for query in queries:
         result = db.max_marginal_relevance_search(query, k=n)
@@ -140,3 +155,36 @@ def reformulate(question, REFORMULATION_TEMP):
         """
         questions.append(talk_to_llama3(q, REFORMULATION_TEMP))
     return questions
+
+#------------------------SIGNUP AND LOGIN ---------------------------
+
+def load_users():
+    try:
+        with open(USERS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=4)
+
+def hash_password(password):
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password, hashed):
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def add_user(username, password):
+    users = load_users()
+    if username in users:
+        return False  # User already exists
+    users[username] = hash_password(password)
+    save_users(users)
+    return True
+
+def authenticate_user(username, password):
+    users = load_users()
+    if username in users and verify_password(password, users[username]):
+        return True
+    return False
