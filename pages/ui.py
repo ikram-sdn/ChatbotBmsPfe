@@ -5,10 +5,24 @@ import datetime
 import json
 import os
 import tempfile
+import pyperclip
+import uuid
+from utils import store_feedback, regenerate_answer  # Import the functions
+
+
 
 CONVERSATION_FILE = "conversation_history.json"
 
 
+
+st.set_page_config(page_title="Dashboard", layout="centered", initial_sidebar_state="collapsed")
+
+st.markdown("""
+    <style>
+    [data-testid="stSidebarNav"] {display: none;}
+    [data-testid="collapsedControl"] {display: none;}
+    </style>
+""", unsafe_allow_html=True)
 
 #--------LOGIN AND SIGNUP ----------
 def main_ui():
@@ -97,7 +111,7 @@ with st.sidebar:
         st.markdown(f"👤 **Connected as :** `{st.session_state.username}`")
         st.markdown("---")
     if st.button("🔒 Logout", key="logout_button", use_container_width=True):
-        st.switch_page("pages/login.py")
+        st.switch_page("login.py")
     if st.button("➕ New Conversation", key="new_conversation_button", use_container_width=True):
         if st.session_state.conversation_mode == "new":
             save_current_conversation()
@@ -122,7 +136,10 @@ with st.sidebar:
                 actual_index = total - 1 - idx
                 col1, col2 = st.columns([8, 1])
                 with col1:
-                    if st.button(f"🗂️ Conversation {total - idx}", key=f"conversation_{date}_{idx}"):
+                    first_msg = conversation["messages"][0]["content"] if conversation["messages"] else "Conversation"
+                    title_preview = (first_msg[:30] + "...") if len(first_msg) > 30 else first_msg
+                    if st.button(f"🗂️ {title_preview}", key=f"conversation_{date}_{idx}"):
+
                         st.session_state.messages = conversation["messages"].copy()
                         st.session_state.conversation_mode = "viewing"
                 with col2:
@@ -168,12 +185,72 @@ if uploaded_file is not None:
             st.text(file_text)
 
 # --- Display past messages ---
-for message in st.session_state.messages:
+# Temporary placeholder for a regenerated message if needed
+regenerated_message = None
+for i, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+        if message["role"] == "assistant":
+            col1, col2, col3 = st.columns([1, 1, 2])
+
+            # 👍 Thumbs up
+            with col1:
+                thumbs_up = st.button("👍", key=f"thumbs_up_{i}")
+                if thumbs_up:
+                    feedback_data = {
+                        "feedback": "thumbs_up",
+                        "response": message["content"],
+                        "question": st.session_state.messages[i - 1]["content"] if i > 0 else "",
+                    }
+                    store_feedback(feedback_data)
+                    
+            # 👎 Thumbs down
+            with col2:
+                thumbs_down = st.button("👎", key=f"thumbs_down_{i}")
+                if thumbs_down:
+                    feedback_data = {
+                        "feedback": "thumbs_down",
+                        "response": message["content"],
+                        "question": st.session_state.messages[i - 1]["content"] if i > 0 else "",
+                    }
+                    store_feedback(feedback_data)
+
+                    # 🧠 Flag for regeneration outside the loop
+                    st.session_state["regenerate_request"] = {
+                        "question": feedback_data["question"]
+                    }
+            # 📋 Copy
+            with col3:
+                copy_btn = st.button("📋 Copy", key=f"copy_{i}")
+                if copy_btn:
+                    pyperclip.copy(message["content"])
+                    st.success("Message copied to clipboard!")
+
+# ✅ Show regenerated answer safely (outside chat context)
+if regenerated_message:
+    with st.chat_message("assistant"):
+        st.markdown(regenerated_message)
+
+
+
+
+# 🔄 Handle regeneration outside chat_message loop
+if "regenerate_request" in st.session_state:
+    question_to_regen = st.session_state["regenerate_request"]["question"]
+    new_answer = regenerate_answer(question_to_regen)
+
+    st.session_state.messages.append({"role": "assistant", "content": new_answer})
+
+    with st.chat_message("assistant"):
+        st.markdown(new_answer)
+
+    del st.session_state["regenerate_request"]
+
+
+
 # --- Handle new user prompt ---
-if prompt := st.chat_input("Posez votre question ici..."):
+if prompt := st.chat_input("Ask your question here..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.session_state.conversation_mode = "new"
@@ -186,3 +263,4 @@ if prompt := st.chat_input("Posez votre question ici..."):
     with st.chat_message("assistant"):
         st.markdown(response)
     st.session_state.messages.append({"role": "assistant", "content": response})
+    st.rerun()

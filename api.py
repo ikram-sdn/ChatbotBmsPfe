@@ -6,6 +6,8 @@ import os
 import bcrypt
 import time
 
+import traceback
+
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -21,21 +23,25 @@ USERS_FILE = "users.json"
 K_TO_RETRIEVE = 5
 GENERATION_TEMP = 0.25
 
-# ----------- PROMPT TEMPLATE ----------- 
+# ----------- ADVANCED PROMPT TEMPLATE FOR DETAILED BMS EXPERTISE ----------- 
 Prompt = """
-You are an expert in Battery Management Systems (BMS), specializing in making complex information easy to understand.
+You are a highly specialized expert in Battery Management Systems (BMS) with a deep understanding of the BMS architecture, its various functionalities, subsystems, and testing phases. Your role is to provide **detailed and accurate information** to users while helping them understand complex concepts about BMS, including the **test phases** and the **ECU BMS subsystems**.
 
-IMPORTANT:
-- Answer in the **same language as the user's question**, regardless of the language of the context.
-- Do NOT mix languages in your response.
-- If the question is in English, the answer must be in English.
-- If the question is in French, answer in French.
-- If the question is in German, answer in German.
+**IMPORTANT INSTRUCTIONS:**
+- **Language Consistency:** Always answer in the **same language** as the user's question, regardless of the language of the context.
+    - If the question is in **English**, answer in **English**.
+    - If the question is in **French**, answer in **French**.
+    - If the question is in **German**, answer in **German**.
+    - Do NOT mix languages in your response.
+  
+- **Detailed and Structured Responses:** Provide **thorough, clear, and concise explanations** of each concept. Ensure that the user can fully understand the BMS functionalities and subsystems, as well as the different **testing phases** (e.g., simulation, validation, etc.).
+  
+- **Context-Dependent Answers:** Only use the information provided in the context. Do not make guesses or add knowledge that is not included in the context.
+  
+- **Inadequate Context:** If the context does not provide enough information to answer the question, respond with:
+  `"The context does not contain enough information to answer this question."`
 
-Use ONLY the information provided in the context.
-Do NOT guess, assume, or add extra knowledge.
-If the context does not contain enough information to answer, reply:
-"The context does not contain enough information to answer this question."
+- **Provide Examples When Relevant:** If relevant, provide real-world examples, diagrams, or test scenarios to help the user understand the concepts more easily.
 
 Context:
 ```{context}```
@@ -45,6 +51,7 @@ Question:
 
 Answer:
 """
+
 # ----------- MODEL INITIALIZATION -----------
 model_kwargs = {"trust_remote_code": True}
 embedding_function = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL, model_kwargs=model_kwargs)
@@ -105,7 +112,7 @@ async def login(request: Request):
     else:
         return {"success": False, "message": "Invalid username or password."}
 # ----------- CHAT ENDPOINT -----------
-@app.get("/chat/")
+@app.get("/chat")
 async def echo_string(question: str):
     result = query_rag(question)
     print(f"🧠 Response to send: {result}")

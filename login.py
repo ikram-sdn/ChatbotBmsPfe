@@ -6,6 +6,15 @@ import datetime
 from utils import verify_password
 
 
+st.set_page_config(page_title="Login", layout="centered", initial_sidebar_state="collapsed")
+# Optional: hide sidebar completely with CSS
+st.markdown("""
+    <style>
+    [data-testid="stSidebarNav"] {display: none;}
+    [data-testid="collapsedControl"] {display: none;}
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🔐 Login")
 
 username = st.text_input("Username")
@@ -24,7 +33,7 @@ if st.button("Login"):
             st.session_state.logged_in = True
             st.session_state.username = username
             st.success("Login successful!")
-            st.switch_page("ui.py")  # 'ui' is the name of your main page file without .py
+            st.switch_page("pages/ui.py")  # 'ui' is the name of your main page file without .py
         else:
             st.error(res.json().get("detail", "Login failed"))
     else:
