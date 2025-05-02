@@ -13,6 +13,14 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
 
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+from langchain_core.messages import AIMessage, HumanMessage
+
+
+from langchain_core.language_models import BaseLanguageModel
+from langchain_core.vectorstores import VectorStoreRetriever
+
 from utils import *
 
 # ----------- CONFIGURATION -----------
@@ -52,6 +60,7 @@ Question:
 Answer:
 """
 
+
 # ----------- MODEL INITIALIZATION -----------
 model_kwargs = {"trust_remote_code": True}
 embedding_function = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL, model_kwargs=model_kwargs)
@@ -59,19 +68,49 @@ db = Chroma(persist_directory=CHROMA_PATH_BIG_VECTORSTORE, embedding_function=em
 
 print('✅ Model and vector database initialized')
 
+#--------------------CONVERSATION MEMORY MANAGEMENT--------------------------
+
+# Initialize LangChain memory for live conversation tracking
+chat_memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+# Setup LLM and conversational chain
+llm = Ollama(model="llama3", temperature=GENERATION_TEMP)
+retriever = db.as_retriever(search_kwargs={"k": K_TO_RETRIEVE})
+
+conversation_chain = ConversationalRetrievalChain.from_llm(
+    llm=llm,
+    retriever=retriever,
+    memory=chat_memory,
+    return_source_documents=False
+)
+
 # ----------- CHATBOT FUNCTION -----------
 def query_rag(query_text):
     print('📨 Inside query...')
     now = time.time()
 
+    # 👉 Add user message to memory
+    chat_memory.chat_memory.add_user_message(query_text)
+
+    # Original RAG logic (kept intact)
     context_results = get_similiar([query_text], db, n=K_TO_RETRIEVE)
     context_text = "\n\n -------------\n\n".join([doc for doc, _ in context_results])
     
     prompt = Prompt.format(context=context_text, question=query_text)
-    response_text = talk_to_llama3(prompt, GENERATION_TEMP)
+
+    # ❌ Old manual model call (bypasses memory)
+    # response_text = talk_to_llama3(prompt, GENERATION_TEMP)
+
+    # ✅ New memory-aware call using LangChain
+    response_text = conversation_chain.run(query_text)
+
+    # 👉 Add AI message to memory
+    chat_memory.chat_memory.add_ai_message(response_text)
 
     print(f"⏱ Time used: {time.time() - now:.2f}s")
     return response_text
+
+
 
 # ----------- FASTAPI SETUP -----------
 app = FastAPI()
