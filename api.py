@@ -27,35 +27,48 @@ from utils import *
 EMBEDDING_MODEL = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
 CHROMA_PATH_BIG_VECTORSTORE = 'db_3'
 USERS_FILE = "users.json"
-
+MIN_CONTEXT_LENGTH=100
 K_TO_RETRIEVE = 5
 GENERATION_TEMP = 0.25
 
 # ----------- ADVANCED PROMPT TEMPLATE FOR DETAILED BMS EXPERTISE ----------- 
 Prompt = """
-You are a highly specialized expert in Battery Management Systems (BMS) with a deep understanding of the BMS architecture, its various functionalities, subsystems, and testing phases. Your role is to provide **detailed and accurate information** to users while helping them understand complex concepts about BMS, including the **test phases** and the **ECU BMS subsystems**.
+You are a highly knowledgeable and helpful expert in Battery Management Systems (BMS), specializing in BMS architecture, subsystems, and testing phases.
+Your role is to provide accurate, structured, and accessible explanations about BMS-related topics. You must reason through the question clearly and helpfully,
+even if the answer is not directly available in the provided context.
 
-**IMPORTANT INSTRUCTIONS:**
-- **Language Consistency:** The only determining factor for the response language is the user’s question. Ignore the context language when choosing the response language
-    - If the question is in **English**, answer in **English**.
-    - If the question is in **French**, answer in **French**.
-    - If the question is in **German**, answer in **German**.
-    - Do NOT mix languages in your response.
-  
-- **Detailed and Structured Responses:** Provide **thorough, clear, and concise explanations** of each concept. Ensure that the user can fully understand the BMS functionalities and subsystems, as well as the different **testing phases** (e.g., simulation, validation, etc.).
-  
-- **Context-Dependent Answers:** Only use the information provided in the context. Do not make guesses or add knowledge that is not included in the context.
-  
-- **Inadequate Context:** If the context does not provide enough information to answer the question, respond with:
-  `"The context does not contain enough information to answer this question."`
+Instructions:
+Language Consistency: The only determining factor for the response language is the user’s question. Ignore the context language when choosing the response language
+ - If the question is in **English**, answer in **English**.
+ - If the question is in **French**, answer in **French**.
+ - If the question is in **German**, answer in **German**.
+ - Do NOT mix languages in your response.
 
-- **Provide Examples When Relevant:** If relevant, provide real-world examples, diagrams, or test scenarios to help the user understand the concepts more easily.
+
+Style Guidelines:
+- Be clear, concise, and logically structured.
+- Break down complex ideas.
+- Use examples, test scenarios, or analogies when useful.
+
+Primary Context Rule:
+- Prioritize answering using the provided context if relevant and sufficient.
+- If context is unclear or incomplete, do not ignore the question. Instead, respond using domain knowledge and explicitly state that you’re doing so.
+
+Fallback Rule – When Context Is Insufficient or Missing:
+If you cannot fully answer using only the context, begin your response with:
+"Note: This answer is based on general knowledge, as the provided context does not fully cover the topic."
+
+Source Attribution:
+If using the context: "Source: Provided context."
+If using general knowledge: "Source: General domain knowledge."
 
 Context:
-```{context}```
+{context}
+
 
 Question:
-```{question}```
+{question}
+
 
 Answer:
 """
@@ -84,31 +97,27 @@ conversation_chain = ConversationalRetrievalChain.from_llm(
     return_source_documents=False
 )
 
+
+
 # ----------- CHATBOT FUNCTION -----------
 def query_rag(query_text):
     print('📨 Inside query...')
     now = time.time()
 
-    # 👉 Add user message to memory
-    chat_memory.chat_memory.add_user_message(query_text)
-
-    # Original RAG logic (kept intact)
     context_results = get_similiar([query_text], db, n=K_TO_RETRIEVE)
     context_text = "\n\n -------------\n\n".join([doc for doc, _ in context_results])
-    
-    prompt = Prompt.format(context=context_text, question=query_text)
+    context_clean = context_text.strip()
 
-    # ❌ Old manual model call (bypasses memory)
-    # response_text = talk_to_llama3(prompt, GENERATION_TEMP)
+    # Check if context is too weak
+    if not context_clean or len(context_clean) < MIN_CONTEXT_LENGTH:
+        context_clean = "N/A"  # Triggers model to use its own knowledge if question is about BMS
 
-    # ✅ New memory-aware call using LangChain
-    response_text = conversation_chain.run(query_text)
-
-    # 👉 Add AI message to memory
-    chat_memory.chat_memory.add_ai_message(response_text)
+    prompt = Prompt.format(context=context_clean, question=query_text)
+    response_text = talk_to_llama3(prompt, GENERATION_TEMP)
 
     print(f"⏱ Time used: {time.time() - now:.2f}s")
     return response_text
+
 
 
 
@@ -155,4 +164,5 @@ async def login(request: Request):
 async def echo_string(question: str):
     result = query_rag(question)
     print(f"🧠 Response to send: {result}")
+
     return {"reply": result}
